@@ -1,0 +1,7 @@
+# Generated output
+tests/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
