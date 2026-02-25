@@ -6,24 +6,25 @@ All storage buffers have STORAGE | COPY_SRC | COPY_DST usage.
 """
 import struct
 import numpy as np
-import wgpu
+from webgpu.webgpu_api import BufferUsage, Device, Buffer
+from webgpu.utils import read_buffer as _read_buffer
 
 
-def _storage(device: wgpu.GPUDevice, size_bytes: int) -> wgpu.GPUBuffer:
-    return device.create_buffer(
+def _storage(device: Device, size_bytes: int) -> Buffer:
+    return device.createBuffer(
         size=size_bytes,
-        usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_SRC | wgpu.BufferUsage.COPY_DST,
+        usage=BufferUsage.STORAGE | BufferUsage.COPY_SRC | BufferUsage.COPY_DST,
     )
 
 
-def _uniform(device: wgpu.GPUDevice, size_bytes: int) -> wgpu.GPUBuffer:
-    return device.create_buffer(
+def _uniform(device: Device, size_bytes: int) -> Buffer:
+    return device.createBuffer(
         size=size_bytes,
-        usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+        usage=BufferUsage.UNIFORM | BufferUsage.COPY_DST,
     )
 
 
-def allocate_buffers(device: wgpu.GPUDevice, n_fits: int, n_points: int, n_params: int = 4):
+def allocate_buffers(device: Device, n_fits: int, n_points: int, n_params: int = 4):
     """Allocate all GPU buffers and return them as a dict."""
     f32 = 4  # bytes per float32
     i32 = 4  # bytes per int32
@@ -57,23 +58,23 @@ def allocate_buffers(device: wgpu.GPUDevice, n_fits: int, n_points: int, n_param
     return bufs
 
 
-def upload(device: wgpu.GPUDevice, buf: wgpu.GPUBuffer, arr: np.ndarray):
+def upload(device: Device, buf: Buffer, arr: np.ndarray):
     """Write a numpy array into a GPU buffer (host→device)."""
-    device.queue.write_buffer(buf, 0, arr.tobytes())
+    device.queue.writeBuffer(buf, 0, arr.tobytes())
 
 
-def upload_zeros(device: wgpu.GPUDevice, buf: wgpu.GPUBuffer, n_elements: int, dtype=np.float32):
+def upload_zeros(device: Device, buf: Buffer, n_elements: int, dtype=np.float32):
     """Upload a zero-filled array of n_elements into buf."""
     upload(device, buf, np.zeros(n_elements, dtype=dtype))
 
 
-def download(device: wgpu.GPUDevice, buf: wgpu.GPUBuffer, dtype, count: int) -> np.ndarray:
+def download(device: Device, buf: Buffer, dtype, count: int) -> np.ndarray:
     """Read count elements of dtype from a GPU buffer back to CPU."""
-    raw = device.queue.read_buffer(buf)
+    raw = _read_buffer(buf)
     return np.frombuffer(raw, dtype=dtype)[:count].copy()
 
 
-def write_uniforms(device: wgpu.GPUDevice, buf: wgpu.GPUBuffer,
+def write_uniforms(device: Device, buf: Buffer,
                    n_fits: int, n_points: int, n_params: int,
                    iteration: int, max_iterations: int, tolerance: float):
     """Pack and upload the uniforms struct (32 bytes)."""
@@ -88,12 +89,12 @@ def write_uniforms(device: wgpu.GPUDevice, buf: wgpu.GPUBuffer,
         0,                 # pad0
         0,                 # pad1
     )
-    device.queue.write_buffer(buf, 0, data)
+    device.queue.writeBuffer(buf, 0, data)
 
 
-def copy_buffer(device: wgpu.GPUDevice,
-                src: wgpu.GPUBuffer, dst: wgpu.GPUBuffer, size_bytes: int):
+def copy_buffer(device: Device,
+                src: Buffer, dst: Buffer, size_bytes: int):
     """GPU-side buffer copy (COPY_SRC → COPY_DST)."""
-    encoder = device.create_command_encoder()
-    encoder.copy_buffer_to_buffer(src, 0, dst, 0, size_bytes)
+    encoder = device.createCommandEncoder()
+    encoder.copyBufferToBuffer(src, 0, dst, 0, size_bytes)
     device.queue.submit([encoder.finish()])

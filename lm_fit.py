@@ -13,7 +13,9 @@ import pathlib
 from typing import NamedTuple
 
 import numpy as np
-import wgpu
+import webgpu as wgpu
+from webgpu.webgpu_api import ShaderStage, Device
+from webgpu.utils import init_device
 
 from gpu_buffers import (
     allocate_buffers,
@@ -49,13 +51,13 @@ def _bgl_entry(binding: int, buffer_type: str) -> dict:
     """Return a BindGroupLayoutEntry dict for a COMPUTE-visible buffer binding."""
     return {
         "binding":    binding,
-        "visibility": wgpu.ShaderStage.COMPUTE,
+        "visibility": ShaderStage.COMPUTE,
         "buffer":     {"type": buffer_type},
     }
 
 
 def _bg_entry(binding: int, buf: wgpu.GPUBuffer) -> dict:
-    return {"binding": binding, "resource": buf}
+    return {"binding": binding, "resource": {"buffer": buf}}
 
 
 # ---------------------------------------------------------------------------
@@ -112,14 +114,14 @@ class LMFitter:
     # ------------------------------------------------------------------
     def _load_shader(self, name: str) -> wgpu.GPUShaderModule:
         src = (SHADER_DIR / name).read_text()
-        return self.device.create_shader_module(code=src)
+        return self.device.createShaderModule({"code": src})
 
     def _make_pipeline(self, shader_module, entry: str, bgl, constants: dict | None = None):
-        pl = self.device.create_pipeline_layout(bind_group_layouts=[bgl])
-        compute_stage: dict = {"module": shader_module, "entry_point": entry}
+        pl = self.device.createPipelineLayout({"bindGroupLayouts": [bgl]})
+        compute_stage: dict = {"module": shader_module, "entryPoint": entry}
         if constants:
             compute_stage["constants"] = constants
-        return self.device.create_compute_pipeline(layout=pl, compute=compute_stage)
+        return self.device.createComputePipeline({"layout": pl, "compute": compute_stage})
 
     def _create_pipelines(self):
         dev = self.device
@@ -127,20 +129,20 @@ class LMFitter:
 
         # ── calc_curve_values (model-specific) ────────────────────────
         sh_cv = self._load_shader(_MODEL_SHADERS[self.model])
-        bgl_cv = dev.create_bind_group_layout(entries=[
+        bgl_cv = dev.createBindGroupLayout({"entries": [
             _bgl_entry(0, "uniform"),
             _bgl_entry(1, "read-only-storage"),  # parameters
             _bgl_entry(2, "read-only-storage"),  # finished
             _bgl_entry(3, "storage"),             # values
             _bgl_entry(4, "storage"),             # derivatives
             _bgl_entry(5, "read-only-storage"),  # x_values
-        ])
+        ]})
         self.pipe_cv  = self._make_pipeline(sh_cv, "main", bgl_cv, {"WG_SIZE": wgs})
         self.bgl_cv   = bgl_cv
 
         # ── calc_stats ─────────────────────────────────────────────────
         sh_cs = self._load_shader("calc_stats.wgsl")
-        bgl_cs = dev.create_bind_group_layout(entries=[
+        bgl_cs = dev.createBindGroupLayout({"entries": [
             _bgl_entry(0, "uniform"),
             _bgl_entry(1, "read-only-storage"),  # data
             _bgl_entry(2, "read-only-storage"),  # values
@@ -151,52 +153,52 @@ class LMFitter:
             _bgl_entry(7, "storage"),             # hessians
             _bgl_entry(8, "storage"),             # iteration_failed
             _bgl_entry(9, "read-only-storage"),  # prev_chi_squares
-        ])
+        ]})
         self.pipe_cs  = self._make_pipeline(sh_cs, "main", bgl_cs, {"WG_SIZE": wgs})
         self.bgl_cs   = bgl_cs
 
         # ── modify_hessian ─────────────────────────────────────────────
         sh_mh = self._load_shader("modify_hessian.wgsl")
-        bgl_mh = dev.create_bind_group_layout(entries=[
+        bgl_mh = dev.createBindGroupLayout({"entries": [
             _bgl_entry(0, "uniform"),
             _bgl_entry(1, "storage"),             # hessians (rw)
             _bgl_entry(2, "read-only-storage"),  # lambdas
             _bgl_entry(3, "storage"),             # scaling_vectors (rw)
             _bgl_entry(4, "read-only-storage"),  # iteration_failed
             _bgl_entry(5, "read-only-storage"),  # finished
-        ])
+        ]})
         self.pipe_mh  = self._make_pipeline(sh_mh, "main", bgl_mh)
         self.bgl_mh   = bgl_mh
 
         # ── gaussjordan ────────────────────────────────────────────────
         sh_gj = self._load_shader("gaussjordan.wgsl")
-        bgl_gj = dev.create_bind_group_layout(entries=[
+        bgl_gj = dev.createBindGroupLayout({"entries": [
             _bgl_entry(0, "uniform"),
             _bgl_entry(1, "read-only-storage"),  # hessians
             _bgl_entry(2, "read-only-storage"),  # gradients
             _bgl_entry(3, "read-only-storage"),  # finished
             _bgl_entry(4, "storage"),             # deltas
             _bgl_entry(5, "storage"),             # solution_info
-        ])
+        ]})
         self.pipe_gj  = self._make_pipeline(sh_gj, "main", bgl_gj)
         self.bgl_gj   = bgl_gj
 
         # ── update_params ──────────────────────────────────────────────
         sh_up = self._load_shader("update_params.wgsl")
-        bgl_up = dev.create_bind_group_layout(entries=[
+        bgl_up = dev.createBindGroupLayout({"entries": [
             _bgl_entry(0, "uniform"),
             _bgl_entry(1, "storage"),             # parameters (rw)
             _bgl_entry(2, "storage"),             # prev_parameters (rw)
             _bgl_entry(3, "read-only-storage"),  # deltas
             _bgl_entry(4, "read-only-storage"),  # finished
             _bgl_entry(5, "read-only-storage"),  # solution_info
-        ])
+        ]})
         self.pipe_up  = self._make_pipeline(sh_up, "main", bgl_up)
         self.bgl_up   = bgl_up
 
         # ── convergence ────────────────────────────────────────────────
         sh_co = self._load_shader("convergence.wgsl")
-        bgl_co = dev.create_bind_group_layout(entries=[
+        bgl_co = dev.createBindGroupLayout({"entries": [
             _bgl_entry(0, "uniform"),
             _bgl_entry(1, "storage"),             # finished (rw)
             _bgl_entry(2, "storage"),             # states (rw)
@@ -207,7 +209,7 @@ class LMFitter:
             _bgl_entry(7, "storage"),             # lambdas (rw)
             _bgl_entry(8, "storage"),             # n_iterations (rw)
             _bgl_entry(9, "read-only-storage"),  # solution_info
-        ])
+        ]})
         self.pipe_co  = self._make_pipeline(sh_co, "main", bgl_co)
         self.bgl_co   = bgl_co
 
@@ -218,16 +220,16 @@ class LMFitter:
         dev  = self.device
         bufs = self.bufs
 
-        self.bg_cv = dev.create_bind_group(layout=self.bgl_cv, entries=[
+        self.bg_cv = dev.createBindGroup({"layout": self.bgl_cv, "entries": [
             _bg_entry(0, bufs["uniforms"]),
             _bg_entry(1, bufs["parameters"]),
             _bg_entry(2, bufs["finished"]),
             _bg_entry(3, bufs["values"]),
             _bg_entry(4, bufs["derivatives"]),
             _bg_entry(5, bufs["x_values"]),
-        ])
+        ]})
 
-        self.bg_cs = dev.create_bind_group(layout=self.bgl_cs, entries=[
+        self.bg_cs = dev.createBindGroup({"layout": self.bgl_cs, "entries": [
             _bg_entry(0, bufs["uniforms"]),
             _bg_entry(1, bufs["data"]),
             _bg_entry(2, bufs["values"]),
@@ -238,36 +240,36 @@ class LMFitter:
             _bg_entry(7, bufs["hessians"]),
             _bg_entry(8, bufs["iteration_failed"]),
             _bg_entry(9, bufs["prev_chi_squares"]),
-        ])
+        ]})
 
-        self.bg_mh = dev.create_bind_group(layout=self.bgl_mh, entries=[
+        self.bg_mh = dev.createBindGroup({"layout": self.bgl_mh, "entries": [
             _bg_entry(0, bufs["uniforms"]),
             _bg_entry(1, bufs["hessians"]),
             _bg_entry(2, bufs["lambdas"]),
             _bg_entry(3, bufs["scaling_vectors"]),
             _bg_entry(4, bufs["iteration_failed"]),
             _bg_entry(5, bufs["finished"]),
-        ])
+        ]})
 
-        self.bg_gj = dev.create_bind_group(layout=self.bgl_gj, entries=[
+        self.bg_gj = dev.createBindGroup({"layout": self.bgl_gj, "entries": [
             _bg_entry(0, bufs["uniforms"]),
             _bg_entry(1, bufs["hessians"]),
             _bg_entry(2, bufs["gradients"]),
             _bg_entry(3, bufs["finished"]),
             _bg_entry(4, bufs["deltas"]),
             _bg_entry(5, bufs["solution_info"]),
-        ])
+        ]})
 
-        self.bg_up = dev.create_bind_group(layout=self.bgl_up, entries=[
+        self.bg_up = dev.createBindGroup({"layout": self.bgl_up, "entries": [
             _bg_entry(0, bufs["uniforms"]),
             _bg_entry(1, bufs["parameters"]),
             _bg_entry(2, bufs["prev_parameters"]),
             _bg_entry(3, bufs["deltas"]),
             _bg_entry(4, bufs["finished"]),
             _bg_entry(5, bufs["solution_info"]),
-        ])
+        ]})
 
-        self.bg_co = dev.create_bind_group(layout=self.bgl_co, entries=[
+        self.bg_co = dev.createBindGroup({"layout": self.bgl_co, "entries": [
             _bg_entry(0, bufs["uniforms"]),
             _bg_entry(1, bufs["finished"]),
             _bg_entry(2, bufs["states"]),
@@ -278,18 +280,18 @@ class LMFitter:
             _bg_entry(7, bufs["lambdas"]),
             _bg_entry(8, bufs["n_iterations"]),
             _bg_entry(9, bufs["solution_info"]),
-        ])
+        ]})
 
     # ------------------------------------------------------------------
     # Dispatch helpers
     # ------------------------------------------------------------------
     def _dispatch(self, pipeline, bind_group, x: int, y: int = 1, z: int = 1):
         """Submit one compute pass."""
-        enc = self.device.create_command_encoder()
-        cp  = enc.begin_compute_pass()
-        cp.set_pipeline(pipeline)
-        cp.set_bind_group(0, bind_group)
-        cp.dispatch_workgroups(x, y, z)
+        enc = self.device.createCommandEncoder()
+        cp  = enc.beginComputePass()
+        cp.setPipeline(pipeline)
+        cp.setBindGroup(0, bind_group)
+        cp.dispatchWorkgroups(x, y, z)
         cp.end()
         self.device.queue.submit([enc.finish()])
 
@@ -402,6 +404,6 @@ class LMFitter:
 # ---------------------------------------------------------------------------
 # Convenience: request a GPU device
 # ---------------------------------------------------------------------------
-def gpu_device(power_preference: str = "high-performance") -> wgpu.GPUDevice:
-    adapter = wgpu.gpu.request_adapter_sync(power_preference=power_preference)
-    return adapter.request_device_sync()
+async def gpu_device(power_preference: str = "high-performance") -> Device:
+    # power_preference kept for API compatibility but unused; init_device handles selection
+    return await init_device()

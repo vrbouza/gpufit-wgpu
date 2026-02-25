@@ -13,14 +13,21 @@ from __future__ import annotations
 
 import pathlib
 
-import matplotlib
-matplotlib.use("Agg")   # headless — no display required
-import matplotlib.pyplot as plt
+try:
+    import matplotlib
+    matplotlib.use("Agg")   # headless — no display required
+    import matplotlib.pyplot as plt
+    _HAS_MATPLOTLIB = True
+except ImportError:
+    _HAS_MATPLOTLIB = False
+
 import numpy as np
 
 import brimfile as bf
 
 from lm_fit import LMFitter, FitResult, gpu_device
+
+import asyncio
 
 TESTS_DIR = pathlib.Path(__file__).parent / "tests"
 TESTS_DIR.mkdir(exist_ok=True)
@@ -128,34 +135,35 @@ def fit_single_pixel(device, PSD: np.ndarray, frequency: np.ndarray):
         print(f"    A={p[0]:.4g}  x0={p[1]:.6g} GHz  gamma={p[2]:.4g} GHz  offset={p[3]:.4g}")
 
     # ── Plot ──────────────────────────────────────────────────────────
-    neg_p = neg_result.parameters[0]
-    pos_p = pos_result.parameters[0]
+    if _HAS_MATPLOTLIB:
+        neg_p = neg_result.parameters[0]
+        pos_p = pos_result.parameters[0]
 
-    x_neg_dense = np.linspace(neg_freq[0],  neg_freq[-1],  400)
-    x_pos_dense = np.linspace(pos_freq[0],  pos_freq[-1],  400)
-    y_neg_fit   = _lorentzian(x_neg_dense, *neg_p)
-    y_pos_fit   = _lorentzian(x_pos_dense, *pos_p)
+        x_neg_dense = np.linspace(neg_freq[0],  neg_freq[-1],  400)
+        x_pos_dense = np.linspace(pos_freq[0],  pos_freq[-1],  400)
+        y_neg_fit   = _lorentzian(x_neg_dense, *neg_p)
+        y_pos_fit   = _lorentzian(x_pos_dense, *pos_p)
 
-    fig, ax = plt.subplots(figsize=(8, 4))
+        fig, ax = plt.subplots(figsize=(8, 4))
 
-    ax.plot(freq, spectrum, "o", ms=4, color="steelblue", label="Data", zorder=3)
-    ax.plot(x_neg_dense, y_neg_fit, "-", lw=2, color="tomato",
-            label=f"Stokes fit  x₀={neg_p[1]:.4f} GHz, γ={neg_p[2]:.4f} GHz")
-    ax.plot(x_pos_dense, y_pos_fit, "-", lw=2, color="seagreen",
-            label=f"anti-Stokes fit  x₀={pos_p[1]:.4f} GHz, γ={pos_p[2]:.4f} GHz")
+        ax.plot(freq, spectrum, "o", ms=4, color="steelblue", label="Data", zorder=3)
+        ax.plot(x_neg_dense, y_neg_fit, "-", lw=2, color="tomato",
+                label=f"Stokes fit  x₀={neg_p[1]:.4f} GHz, γ={neg_p[2]:.4f} GHz")
+        ax.plot(x_pos_dense, y_pos_fit, "-", lw=2, color="seagreen",
+                label=f"anti-Stokes fit  x₀={pos_p[1]:.4f} GHz, γ={pos_p[2]:.4f} GHz")
 
-    ax.axvline(0, color="gray", lw=0.8, ls="--")
-    ax.set_xlabel("Frequency (GHz)")
-    ax.set_ylabel("PSD")
-    ax.set_title("Single-pixel Brillouin spectrum — Lorentzian LM fits (WebGPU)")
-    ax.legend(framealpha=0.9, fontsize=9)
-    fig.tight_layout()
+        ax.axvline(0, color="gray", lw=0.8, ls="--")
+        ax.set_xlabel("Frequency (GHz)")
+        ax.set_ylabel("PSD")
+        ax.set_title("Single-pixel Brillouin spectrum — Lorentzian LM fits (WebGPU)")
+        ax.legend(framealpha=0.9, fontsize=9)
+        fig.tight_layout()
 
-    for ext in ("png", "pdf"):
-        out_path = TESTS_DIR / f"single_pixel_fit.{ext}"
-        fig.savefig(out_path, dpi=150)
-        print(f"  Plot saved       : {out_path}")
-    plt.close(fig)
+        for ext in ("png", "pdf"):
+            out_path = TESTS_DIR / f"single_pixel_fit.{ext}"
+            fig.savefig(out_path, dpi=150)
+            print(f"  Plot saved       : {out_path}")
+        plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -208,11 +216,11 @@ def fit_all_pixels(device, PSD: np.ndarray, frequency: np.ndarray):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def main():
+async def main():
     print("=== WebGPU Levenberg-Marquardt Lorentzian Fitting ===\n")
 
     print("Step 1: Initialising GPU …")
-    device = gpu_device()
+    device = await gpu_device()
     print(f"  Adapter : {device.adapter.info}")
 
     print("\nStep 2: Loading Brillouin data …")
@@ -225,4 +233,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
