@@ -25,7 +25,7 @@ import numpy as np
 
 import brimfile as bf
 
-from lm_fit import LMFitter, FitResult, gpu_device
+from gpufit_wgpu import LMFitter, FitResult, gpu_device
 
 import asyncio
 
